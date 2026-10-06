@@ -1,0 +1,11 @@
+agente_a,agente_b,ganador,diferencia_fichas,profundidad_a,profundidad_b,tiempo_a,tiempo_b
+IA_Adaptativa_dinamica_d5,IA_Estatica_d4,IA_Adaptativa_dinamica_d5,4,5,4,1.4845,0.2735
+IA_Estatica_d4,IA_Adaptativa_dinamica_d5,IA_Adaptativa_dinamica_d5,40,4,5,0.2169,1.3771
+IA_Adaptativa_dinamica_d5,IA_Estatica_d4,IA_Adaptativa_dinamica_d5,4,5,4,1.4092,0.2531
+IA_Estatica_d4,IA_Adaptativa_dinamica_d5,IA_Adaptativa_dinamica_d5,40,4,5,0.1953,1.1625
+IA_Adaptativa_dinamica_d5,IA_Estatica_d4,IA_Adaptativa_dinamica_d5,4,5,4,1.5382,0.2517
+IA_Estatica_d4,IA_Adaptativa_dinamica_d5,IA_Adaptativa_dinamica_d5,40,4,5,0.1989,1.111
+IA_Adaptativa_dinamica_d5,IA_Estatica_d4,IA_Adaptativa_dinamica_d5,4,5,4,1.3261,0.2629
+IA_Estatica_d4,IA_Adaptativa_dinamica_d5,IA_Adaptativa_dinamica_d5,40,4,5,0.2428,1.2895
+IA_Adaptativa_dinamica_d5,IA_Estatica_d4,IA_Adaptativa_dinamica_d5,4,5,4,1.453,0.2669
+IA_Estatica_d4,IA_Adaptativa_dinamica_d5,IA_Adaptativa_dinamica_d5,40,4,5,0.186,1.2054

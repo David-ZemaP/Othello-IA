@@ -1,0 +1,23 @@
+\begin{thebibliography}{1}
+
+\bibitem{buro1997logistello}
+Michael Buro.
+\newblock The evaluation function of the othello program logistello.
+\newblock {\em Computers and Games}, pages 89--98, 1997.
+
+\bibitem{rosenbloom1982world}
+Paul~S. Rosenbloom.
+\newblock A world-championship-level othello program.
+\newblock {\em Artificial Intelligence}, 19(3):279--320, 1982.
+
+\bibitem{russell2020artificial}
+Stuart Russell and Peter Norvig.
+\newblock {\em Artificial Intelligence: A Modern Approach}.
+\newblock Pearson, 4th edition, 2020.
+
+\bibitem{sannidhanam2015ananalysis}
+Vaishnavi Sannidhanam and Muthukaruppan Annamalai.
+\newblock An analysis of heuristics in othello.
+\newblock {\em University of Washington, Tech Report}, 2015.
+
+\end{thebibliography}

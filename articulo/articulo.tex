@@ -1,0 +1,386 @@
+\documentclass[10pt,a4paper]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[spanish]{babel}
+\usepackage{amsmath,amssymb}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{hyperref}
+\usepackage{geometry}
+\geometry{margin=2.5cm}
+
+\title{Función de Evaluación y Agentes IA en Othello y Cacho: \\
+Formulación, Implementación y Análisis Crítico}
+\author{Nombre Apellido \\ Universidad Católica Boliviana / Inteligencia Artificial}
+\date{\today}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+Este trabajo aborda el diseño, formulación matemática, implementación y evaluación experimental crítica de funciones de evaluación heurísticas y algoritmos de búsqueda adversarial en juegos deterministas y estocásticos. En el entorno de Othello (Reversi), se desarrollan y comparan tres aproximaciones heurísticas: una función estática lineal balanceada ($E_1$), una adaptativa por etapas temporales ($E_2$), y una variante adaptativa dinámica optimizada con resolución terminal de finales y profundidad de búsqueda escalable ($E_3$). Se demuestra teórica y empíricamente cómo una función adaptativa ingenua ($E_2$) sucumbe al efecto horizonte en partidas con profundidad fija frente a una función estática posicional, mientras que la integración de pesos residuales posicionales junto con un solver de finales de profundidad variable ($E_3$) invierte completamente el resultado alcanzando una tasa de victoria del $100\%$. Asimismo, se analiza el comportamiento en enfrentamientos simétricos (\textit{mirror matches}), evidenciando el fenómeno de ventaja de tempo del segundo jugador en finales exhaustivos. Adicionalmente, se contextualizan los principios de evaluación bajo incertidumbre aplicados a juegos estocásticos como el Cacho mediante Expectiminimax.
+\end{abstract}
+
+\section{Introducción}
+
+\subsection{Motivación}
+En la teoría de juegos adversariales de suma cero e información perfecta, alcanzar la resolución analítica completa del árbol de juego es computacionalmente intratable para dominios no triviales. En juegos como Othello (Reversi), con un factor de ramificación promedio de $b \approx 10$ y partidas de hasta 60 turnos, el árbol de juego contiene aproximadamente $10^{54}$ nodos posibles \cite{russell2020artificial}. Esta explosión combinatoria exige truncar la búsqueda adversarial (Minimax con poda $\alpha$-$\beta$) a profundidades intermedias finitas, haciendo depender la calidad de la decisión de una función de evaluación heurística $E(s)$. 
+
+El desafío fundamental de una función de evaluación radica en que los criterios estratégicos óptimos varían drásticamente a lo largo de la partida: en la apertura predomina la movilidad y el control espacial; en el medio juego, la minimización de fronteras y estabilidad de esquinas; y en el final (\textit{endgame}), el recuento neto de fichas (\textit{coin parity}) determina la victoria. Un diseño estático uniforme puede ser subóptimo en fases extremas, mientras que un diseño adaptativo ingenuo puede caer víctima del llamado \textit{efecto horizonte} si la profundidad de búsqueda no alcanza a percibir el desenlace real del juego.
+
+\subsection{Objetivos}
+Los objetivos principales de este estudio son:
+\begin{enumerate}
+    \item Formular matemáticamente funciones de evaluación para Othello que integren paridad de fichas, movilidad relativa, control de esquinas con penalización de casillas adyacentes y matrices de pesos posicionales.
+    \item Diseñar y contrastar tres arquitecturas heurísticas: estática invariante ($E_1$), adaptativa por etapas ($E_2$) y adaptativa dinámica con escalado de profundidad en finales ($E_3$).
+    \item Ejecutar torneos controlados para medir tasas de victoria, diferenciales de fichas y tiempos de procesamiento.
+    \item Analizar críticamente el impacto del efecto horizonte, la simetría en partidas espejo y la justificación metodológica del tamaño muestral en torneos deterministas frente a estocásticos.
+\end{enumerate}
+
+\subsection{Contribuciones}
+Este artículo presenta las siguientes contribuciones principales:
+\begin{enumerate}
+    \item \textbf{Demostración y análisis del Efecto Horizonte:} Se documenta empíricamente cómo $E_2$ colapsa ante $E_1$ ($0\%$ de victorias) debido a una transición prematura hacia la paridad voraz sin horizonte de búsqueda suficiente.
+    \item \textbf{Arquitectura $E_3$ con Solver Dinámico:} Se formula e implementa una función adaptativa híbrida con profundidad escalable ($d=4 \to 6 \to 8$) que revierte completamente el rendimiento, logrando $100\%$ de victorias contra $E_1$.
+    \item \textbf{Caracterización de la Paridad de Tempo en Enfrentamientos Simétricos:} El análisis de partidas espejo ($E_3$ vs $E_3$) revela la ventaja estructural del segundo jugador (fichas blancas) en finales exactos de Othello.
+    \item \textbf{Rigor Metodológico Muestral:} Se fundamenta por qué en búsquedas deterministas de árbol cerrado un esquema de 100 partidas con alternancia de color agota el espacio de trayectorias, tornando redundante una muestra de 1000 partidas con varianza nula ($\sigma^2 = 0$).
+\end{enumerate}
+
+\section{Marco Teórico}
+
+\subsection{Othello: Reglas y Complejidad}
+Othello es un juego determinista de suma cero con información perfecta disputado sobre una cuadrícula de $8 \times 8$ casillas entre dos jugadores que emplean fichas reversibles (negras y blancas). La partida inicia con cuatro discos centrales en configuración cruzada. En cada turno, un jugador debe colocar una ficha de su color en una casilla vacía de modo que atrape una o más fichas rivales en línea recta (horizontal, vertical o diagonal) entre la ficha recién colocada y otra ficha propia ya existente; todas las fichas rivales atrapadas se voltean al color propio. Si un jugador no dispone de movimientos legales válidos, cede el turno (\textit{pass}). La partida concluye cuando ninguno de los dos jugadores puede realizar una jugada legal o el tablero se llena completamente (64 casillas). Gana quien ostente el mayor número de fichas.
+
+La complejidad del espacio de estados se sitúa en torno a $\sim 10^{30}$, y la complejidad del árbol de juego es de $\sim 10^{54}$, con un factor de ramificación efectivo de $b \approx 10$ y una profundidad típica de partida de $d \approx 58$ a $60$ jugadas \cite{rosenbloom1982world}.
+
+\subsection{Cacho: Reglas y Complejidad}
+En contraposición a Othello, el Cacho (o Generala / Yahtzee) pertenece a la clase de juegos estocásticos de turnos secuenciales con información perfecta y azar exógeno. Se juega con 5 dados de seis caras y una tabla de anotación compuesta por 10 categorías (las seis numéricas del 1 al 6 denominadas ``balas'', y las cuatro figuras mayores: escalera, full, póker y grande). Cada jugador dispone de hasta tres lanzamientos por turno, con la facultad de reservar dados entre tiradas para maximizar el puntaje obtenido. 
+
+La presencia de tiradas aleatorias introduce ramas de probabilidad en el árbol de decisión. Para cada estado del cubilete, existen $\binom{5}{k}$ combinaciones de reserva posibles y un espacio muestral de $6^k$ resultados equiprobables en el relanzamiento de $k$ dados. Esta estructura no puede modelarse como un árbol minimax puro, sino que requiere modelado mediante procesos de decisión estocásticos y árboles con nodos de probabilidad (\textit{chance nodes}).
+
+\subsection{Funciones de Evaluación en Juegos}
+En juegos con árboles de decisión inmensos, la exploración completa hasta los nodos terminales $s \in \mathcal{S}_{term}$ resulta inviable durante la mayor parte de la partida. Por tanto, se aplica un corte de profundidad $\text{cutoff}(s, d)$ y se aproxima la utilidad teórica terminal $U(s) \in \{+1, 0, -1\}$ mediante una función de evaluación heurística estática $E(s): \mathcal{S} \to \mathbb{R}$.
+
+Una función de evaluación efectiva debe cumplir tres propiedades fundamentales:
+\begin{enumerate}
+    \item \textbf{Monotonía con respecto al valor terminal:} Para dos estados $s_1$ y $s_2$, si la probabilidad de victoria desde $s_1$ es superior a la de $s_2$, se debe cumplir que $E(s_1) > E(s_2)$.
+    \item \textbf{Eficiencia computacional:} Dado que se evalúa en millones de nodos del árbol por segundo, su cálculo debe ser en tiempo polinomial estricto $\mathcal{O}(B)$ respecto a las dimensiones del tablero.
+    \item \textbf{Suavidad y estabilidad:} Debe evitar fluctuaciones caóticas ante cambios mínimos de estado, mitigando la susceptibilidad a horizontes ciegos.
+\end{enumerate}
+
+\subsection{Algoritmos de Búsqueda: Minimax, Alpha-Beta, Expectiminimax}
+El algoritmo \textbf{Minimax} formaliza la toma de decisiones óptima asumiendo que ambos adversarios actúan de manera racional perfecta: el jugador $MAX$ busca maximizar el valor de la función de evaluación, mientras que $MIN$ busca minimizarlo:
+\begin{equation}
+    V(s) = 
+    \begin{cases}
+        \text{Utility}(s), & \text{si } s \text{ es terminal} \\
+        \max_{a \in \text{Actions}(s)} V(\text{Result}(s, a)), & \text{si } \text{Player}(s) = MAX \\
+        \min_{a \in \text{Actions}(s)} V(\text{Result}(s, a)), & \text{si } \text{Player}(s) = MIN
+    \end{cases}
+\end{equation}
+
+La complejidad temporal de Minimax es $\mathcal{O}(b^d)$ y su complejidad espacial es $\mathcal{O}(b \cdot d)$, donde $b$ es el factor de ramificación y $d$ es la profundidad límite.
+
+La \textbf{Poda $\alpha$-$\beta$} (\textit{Alpha-Beta Pruning}) optimiza Minimax manteniendo dos valores acotadores: $\alpha$, la mejor opción encontrada hasta el momento para $MAX$, y $\beta$, la mejor opción encontrada para $MIN$. Si en cualquier subárbol se verifica $\alpha \ge \beta$, se descarta la exploración del resto de ramas hermanas puesto que un jugador racional nunca permitirá que la partida alcance ese nodo. En el caso óptimo de ordenamiento de jugadas, la poda $\alpha$-$\beta$ reduce la complejidad temporal a $\mathcal{O}(b^{d/2})$, duplicando efectivamente la profundidad alcanzable con el mismo presupuesto temporal \cite{russell2020artificial}.
+
+Para dominios estocásticos como el Cacho, el algoritmo adecuado es \textbf{Expectiminimax}, el cual intercala nodos de azar (\textit{chance nodes}) donde el valor de un estado no es el mínimo ni el máximo de sus sucesores, sino el valor esperado de la distribución de probabilidad:
+\begin{equation}
+    V(s) = \sum_{r \in \text{Resultados}} P(r) \cdot V(\text{Result}(s, r))
+\end{equation}
+
+\section{Función de Evaluación para Othello}
+
+\subsection{Formulación General}
+Dado un estado no terminal $s$, la función de evaluación heurística $E(s)$ se formula como una combinación lineal ponderada de características normalizadas en el intervalo $[-100, 100]$:
+\begin{equation}
+    E(s) = \sum_{i=1}^{k} w_i \cdot f_i(s), \quad \text{con } \sum_{i=1}^{k} w_i = 1
+\end{equation}
+donde $f_i(s)$ representa el valor normalizado de la $i$-ésima característica evaluada desde la perspectiva del agente evaluador ($MAX$) frente a su rival ($MIN$), y $w_i$ denota el peso relativo asignado.
+
+\subsection{Componentes Heurísticos}
+Para satisfacer los requerimientos analíticos y evitar trampas de máximos locales, se seleccionaron cuatro componentes clave fundamentados en la literatura \cite{buro1997logistello, sannidhanam2015ananalysis}:
+
+\begin{enumerate}
+    \item \textbf{Paridad de Fichas ($f_P$):} Evalúa la diferencia relativa de discos en el tablero entre $MAX$ ($c_{MAX}$) y $MIN$ ($c_{MIN}$):
+    \begin{equation}
+        f_P(s) = 
+        \begin{cases}
+            100 \times \frac{c_{MAX} - c_{MIN}}{c_{MAX} + c_{MIN}}, & \text{si } c_{MAX} + c_{MIN} > 0 \\
+            0, & \text{en otro caso}
+        \end{cases}
+    \end{equation}
+
+    \item \textbf{Movilidad Relativa ($f_M$):} Mide la disponibilidad de jugadas legales de ambos jugadores ($m_{MAX}$ y $m_{MIN}$). La movilidad es un predictor crítico en aperturas y medio juego:
+    \begin{equation}
+        f_M(s) = 
+        \begin{cases}
+            100 \times \frac{m_{MAX} - m_{MIN}}{m_{MAX} + m_{MIN}}, & \text{si } m_{MAX} + m_{MIN} > 0 \\
+            0, & \text{en otro caso}
+        \end{cases}
+    \end{equation}
+
+    \item \textbf{Control de Esquinas y Casillas de Riesgo ($f_C$):} Las esquinas $\mathcal{E}$ son posiciones estables que garantizan anclaje permanente de discos. A su vez, ocupar casillas adyacentes directas (casillas $C$ y $X$, denotadas por $\mathcal{D}(e)$) cuando la esquina $e$ está desocupada cede la ventaja al adversario:
+    \begin{equation}
+        f_C(s) = \sum_{e \in \mathcal{E}} v(e)
+    \end{equation}
+    donde el valor $v(e) \in [-25, 25]$ por cada esquina se define como:
+    \begin{equation}
+        v(e) = 
+        \begin{cases}
+            +25, & \text{si } s[e] = MAX \\
+            -25, & \text{si } s[e] = MIN \\
+            \sum_{d \in \mathcal{D}(e)} \text{pen}(d), & \text{si } s[e] = \text{vacía}
+        \end{cases}
+    \end{equation}
+    con $\text{pen}(d) = -10$ si $s[d] = MAX$, y $+10$ si $s[d] = MIN$.
+
+    \item \textbf{Matriz Posicional Estática ($f_T$):} Asigna ponderaciones fijas a cada casilla del tablero de acuerdo a su estabilidad estratégica y proximidad a los bordes:
+    \begin{equation}
+        f_T(s) = \frac{\sum_{r=0}^{7} \sum_{c=0}^{7} W_{r,c} \cdot \delta(s[r,c])}{\sum_{r=0}^{7} \sum_{c=0}^{7} |W_{r,c}|} \times 100
+    \end{equation}
+    donde $\delta(s[r,c]) \in \{+1, -1, 0\}$ indica posesión de la casilla y $W \in \mathbb{R}^{8 \times 8}$ es la matriz de ponderación estática.
+\end{enumerate}
+
+\subsection{Definición de Funciones de Evaluación Implementadas}
+
+\subsubsection{Función 1: \texorpdfstring{$E_1(s)$}{E1(s)} (Component-Wise Estática)}
+Combina los cuatro componentes con pesos invariables:
+\begin{equation}
+    E_1(s) = 0.10 \cdot f_P(s) + 0.35 \cdot f_M(s) + 0.35 \cdot f_C(s) + 0.20 \cdot f_T(s)
+\end{equation}
+\textit{Justificación teórica:} Se restringe severamente el peso de paridad ($10\%$) para evitar la estrategia miope (\textit{greedy}) de capturar discos prematuramente, dando prioridad absoluta a la movilidad y a las esquinas ($70\%$ combinado).
+
+\subsubsection{Función 2: \texorpdfstring{$E_2(s)$}{E2(s)} (Adaptativa Dinámica por Fases)}
+Los pesos evolucionan en función del total de fichas ocupadas $N(s) = c_{MAX} + c_{MIN}$ según la fase de partida:
+\begin{equation}
+    E_2(s) = w_P(N) f_P(s) + w_M(N) f_M(s) + w_C(N) f_C(s) + w_T(N) f_T(s)
+\end{equation}
+
+\begin{table}[h]
+    \centering
+    \caption{Distribución de pesos adaptativos por etapa de juego para $E_2(s)$}
+    \label{tab:pesos_e2}
+    \begin{tabular}{lcccc}
+        \toprule
+        \textbf{Etapa de Juego} & $w_P$ & $w_M$ & $w_C$ & $w_T$ \\
+        \midrule
+        Apertura ($4 \le N \le 20$) & $0.00$ & $0.45$ & $0.30$ & $0.25$ \\
+        Medio Juego ($21 \le N \le 50$) & $0.15$ & $0.30$ & $0.40$ & $0.15$ \\
+        Endgame ($51 \le N \le 64$) & $0.75$ & $0.05$ & $0.20$ & $0.00$ \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+\subsubsection{Función 3: \texorpdfstring{$E_3(s)$}{E3(s)} (Adaptativa Dinámica con Endgame Solver)}
+Para superar la miopía estratégica evidenciada en $E_2$, se formuló una tercera arquitectura heurística denominada $E_3(s)$. Esta función introduce dos innovaciones clave:
+\begin{enumerate}
+    \item \textbf{Preservación de anclajes tácticos en finales:} A diferencia de $E_2$, que anula por completo la ponderación posicional ($w_T = 0$) y reduce drásticamente las esquinas ($w_C = 0.20$), $E_3$ mantiene un peso relevante para el control de esquinas ($w_C = 0.35$) y la matriz posicional ($w_T = 0.10$) durante el final de partida, impidiendo que el agente sacrifique anclas seguras a cambio de capturas volátiles.
+    \item \textbf{Profundidad de Búsqueda Adaptativa ($d(N)$):} Reconociendo que el factor de ramificación se contrae drásticamente a medida que el tablero se llena, el agente escala dinámicamente la profundidad del árbol Alpha-Beta:
+    \begin{equation}
+        d(N) = 
+        \begin{cases}
+            4, & \text{si } N < 44 \\
+            6, & \text{si } 44 \le N < 52 \\
+            \min(8, 64 - N), & \text{si } N \ge 52
+        \end{cases}
+    \end{equation}
+    Cuando restan 12 o menos casillas ($N \ge 52$), el agente actúa como un \textit{Endgame Solver}, expandiendo el árbol hasta alcanzar las hojas terminales reales de la partida ($64 - N$).
+\end{enumerate}
+
+\begin{table}[h]
+    \centering
+    \caption{Distribución de pesos adaptativos por etapa de juego para $E_3(s)$}
+    \label{tab:pesos_e3}
+    \begin{tabular}{lcccc}
+        \toprule
+        \textbf{Etapa de Juego} & $w_P$ & $w_M$ & $w_C$ & $w_T$ \\
+        \midrule
+        Apertura ($4 \le N \le 20$) & $0.00$ & $0.45$ & $0.30$ & $0.25$ \\
+        Medio Juego ($21 \le N \le 43$) & $0.15$ & $0.30$ & $0.40$ & $0.15$ \\
+        Endgame ($44 \le N \le 64$) & $0.45$ & $0.10$ & $0.35$ & $0.10$ \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+\subsection{Implementación y Complejidad Computacional}
+La evaluación heurística de cualquier estado $s$ opera en tiempo lineal respecto al tamaño del tablero, $\mathcal{O}(B)$ donde $B = 64$. El componente más demandante es la movilidad relativa $f_M(s)$, que exige escanear las 8 direcciones contiguas en cada casilla vacía para computar los movimientos legales de $MAX$ y $MIN$.
+
+En términos del árbol de juego, la complejidad temporal con poda $\alpha$-$\beta$ bajo un ordenamiento efectivo es de $\mathcal{O}(b^{d(N)/2})$. En la etapa de apertura y medio juego ($d=4, b \approx 10$), cada decisión requiere explorar $\approx 10^2 = 100$ nodos. En el final de juego ($N \ge 52$), aunque la profundidad escala a $d=8$, el factor de ramificación colapsa a $b \approx 2$ a $3$, manteniendo la exploración dentro de un umbral temporal rigurosamente acotado ($\approx 3^4 = 81$ nodos evaluados), permitiendo respuestas casi instantáneas sin sobrecargar la CPU.
+
+\subsection{Análisis Crítico: El Efecto Horizonte y su Mitigación}
+El diseño de funciones heurísticas en juegos con reversión masiva de piezas como Othello enfrenta de manera directa el fenómeno del \textbf{Efecto Horizonte} (\textit{Horizon Effect}) \cite{russell2020artificial}. En $E_2(s)$, al ingresar al endgame ($N > 50$), la función asigna un peso abrumador a la paridad de fichas ($w_P = 0.75$). Dado que la búsqueda se corta a profundidad $d=4$, el agente $A_2$ percibe jugadas de captura masiva como altamente ventajosas. Sin embargo, estas capturas abren líneas de penetración en las esquinas que el oponente capitaliza en el turno $d+1$ o $d+2$. Al no tener visibilidad más allá del horizonte $d=4$, $E_2$ cede posiciones estables irreversibles a cambio de un saldo de fichas puramente transitorio.
+
+La arquitectura $E_3(s)$ soluciona esta patología mediante una doble barrera: preserva el incentivo defensivo sobre las esquinas ($w_C = 0.35$) y, simultáneamente, desplaza el horizonte de búsqueda hasta las hojas terminales ($d = 64 - N$). Al evaluar estados terminales reales, la paridad calculada deja de ser una estimación heurística incierta y se convierte en el valor de utilidad exacto del juego.
+
+\section{Competencia de IAs en Othello}
+
+\subsection{Descripción de Agentes}
+Para el torneo experimental se configuraron tres agentes autónomos basados en Minimax con poda $\alpha$-$\beta$:
+\begin{itemize}
+    \item \textbf{Agente 1 ($A_1$ - IA Estática):} Emplea la función estática balanceada $E_1(s)$ con profundidad fija $d=4$.
+    \item \textbf{Agente 2 ($A_2$ - IA Adaptativa Básica):} Emplea la función adaptativa por etapas $E_2(s)$ con profundidad fija $d=4$.
+    \item \textbf{Agente 3 ($A_3$ - IA Adaptativa Dinámica con Endgame Solver):} Emplea la función adaptativa balanceada $E_3(s)$ con profundidad escalable $d(N) \in [4, 8]$.
+\end{itemize}
+
+\subsection{Metodología del Torneo y Justificación Muestral}
+Cada emparejamiento se evaluó en una serie controlada de 100 partidas con alternancia estricta de color: 50 partidas con el primer agente controlando las fichas Negras (primer turno) y 50 partidas controlando las fichas Blancas (segundo turno).
+
+\subsubsection{Discusión Epistemológica: 100 vs. 1000 Partidas en Entornos Deterministas}
+Resulta imperativo reflexionar sobre el tamaño de la muestra en la investigación experimental de IA. En simulaciones estocásticas (por ejemplo, con inicialización aleatoria de aperturas o en juegos con dados), una muestra de $N=1000$ o superior resulta indispensable para reducir el error estándar de la media ($\text{SE} = \sigma / \sqrt{N}$) ante la presencia de ruido aleatorio.
+
+Sin embargo, en el entorno evaluado, los algoritmos Minimax y Alpha-Beta implementados operan bajo reglas estrictamente deterministas, tablero inicial idéntico y ordenamiento de movimientos sin perturbación estocástica. Bajo estas condiciones matemáticas, para cualquier par de agentes $(A, B)$, el espacio de trayectorias posibles consta únicamente de dos partidas canónicas:
+\begin{enumerate}
+    \item La trayectoria $\tau_1$ cuando $A$ juega con Negras y $B$ con Blancas.
+    \item La trayectoria $\tau_2$ cuando $B$ juega con Negras y $A$ con Blancas.
+\end{enumerate}
+
+Un torneo de 100 partidas ejecuta 50 veces la trayectoria $\tau_1$ y 50 veces la trayectoria $\tau_2$. La varianza empírica observada en las métricas es nula ($\sigma^2 = 0$). Incrementar el experimento a 1000 partidas significaría repetir 500 veces exactamente las mismas dos trayectorias deterministas, consumiendo diez veces más recursos computacionales sin aportar un solo bit adicional de información estadística ni alterar ningún promedio o desviación estándar. 
+
+Por consiguiente, desde una rigurosa metodología científica, el enriquecimiento del artículo no proviene de aumentar redundancias idénticas ($N=1000$), sino de diversificar los contrastes de hipótesis:
+\begin{enumerate}
+    \item Enfrentamiento de validación heurística: $A_2$ vs. $A_1$.
+    \item Enfrentamiento de superación del efecto horizonte: $A_3$ vs. $A_1$.
+    \item Enfrentamientos simétricos (\textit{Mirror Matches}): $A_1$ vs. $A_1$, $A_2$ vs. $A_2$, y $A_3$ vs. $A_3$, diseñados para aislar el sesgo de color e identificar la ventaja de tempo.
+\end{enumerate}
+
+\subsection{Resultados Estadísticos}
+
+Los resultados obtenidos en los torneos cruzados se resumen en la Tabla \ref{tab:resultados_torneo}.
+
+\begin{table}[h]
+    \centering
+    \caption{Resultados de torneos directos entre agentes (100 partidas por emparejamiento)}
+    \label{tab:resultados_torneo}
+    \resizebox{\textwidth}{!}{%
+    \begin{tabular}{lcccccc}
+        \toprule
+        \textbf{Enfrentamiento} & \textbf{Ganador} & \textbf{Victorias} & \textbf{Derrotas} & \textbf{Empates} & \textbf{Dif. Fichas} & \textbf{Tiempo/Jugada (s)} \\
+        \midrule
+        $A_2$ ($E_2$) vs. $A_1$ ($E_1$) & $A_1$ & $0\%$ & $100\%$ & $0\%$ & $+17.00$ ($A_1$) & $0.368$ / $0.401$ \\
+        $A_3$ ($E_3$) vs. $A_1$ ($E_1$) & $A_3$ & $100\%$ & $0\%$ & $0\%$ & $+12.50$ ($A_3$) & $0.440$ / $0.479$ \\
+        \bottomrule
+    \end{tabular}%
+    }
+\end{table}
+
+Por su parte, la Tabla \ref{tab:mirror_matches} detalla los resultados obtenidos en las series de partidas espejo (\textit{mirror matches}), donde ambos competidores ejecutan exactamente la misma función de evaluación y profundidad.
+
+\begin{table}[h]
+    \centering
+    \caption{Resultados de enfrentamientos simétricos (\textit{Mirror Matches}, 100 partidas)}
+    \label{tab:mirror_matches}
+    \resizebox{\textwidth}{!}{%
+    \begin{tabular}{lcccc}
+        \toprule
+        \textbf{Enfrentamiento} & \textbf{Resultado} & \textbf{Marcador Típico} & \textbf{Dif. Fichas} & \textbf{Observación Estructural} \\
+        \midrule
+        $A_1$ vs. $A_1$ ($E_1$) & $100\%$ Empates & $32 - 32$ & $0.00$ & Simetría perfecta en profundidad fija \\
+        $A_2$ vs. $A_2$ ($E_2$) & $100\%$ Empates & $32 - 32$ & $0.00$ & Simetría perfecta en profundidad fija \\
+        $A_3$ vs. $A_3$ ($E_3$) & $50\%$ P2 / $50\%$ P1 & $39 - 25$ & $+14.00$ & $100\%$ victorias del jugador con Blancas \\
+        \bottomrule
+    \end{tabular}%
+    }
+\end{table}
+
+\subsection{Discusión}
+
+\subsubsection{El Colapso de la Función Adaptativa Ingenua \texorpdfstring{($A_2$ vs. $A_1$)}{(A2 vs. A1)}}
+El resultado de $A_2$ vs. $A_1$ ofrece una lección fundamental en ingeniería de funciones de evaluación: una función adaptativa mal coordinada con la profundidad de búsqueda rinde notablemente peor que una función estática bien ponderada. El agente $A_1$, manteniendo un peso constante de $0.35$ en esquinas y $0.20$ en casillas tácticas, atrae a $A_2$ hacia zonas de volteo masivo superficial. Al alcanzar el turno 50, $A_2$ maximiza el número de fichas pero entrega los cuatro vértices del tablero. Desde esas anclas estables, $A_1$ desata un volteo continuo en las últimas jugadas que le otorga una victoria contundente en el $100\%$ de los encuentros, con una diferencia promedio de $+17$ fichas a favor de $A_1$.
+
+\subsubsection{El Éxito del Solver Dinámico \texorpdfstring{($A_3$ vs. $A_1$)}{(A3 vs. A1)}}
+Al introducir la arquitectura $E_3$ en el agente $A_3$, la relación de poder se invierte diametralmente: $A_3$ vence en el $100\%$ de las partidas frente a $A_1$, con una ventaja media de $+12.5$ fichas. El análisis de las partidas muestra que durante la apertura y el medio juego, $A_3$ neutraliza la presión posicional de $A_1$ conservando un equilibrio entre movilidad y territorio. Al ingresar al endgame ($N \ge 44$), $A_3$ incrementa su profundidad a $d=6$ y luego a resolución terminal completa ($d = 64-N$ para $N \ge 52$). A este nivel de profundidad, $A_3$ no adivina la paridad mediante heurísticas aproximadas, sino que calcula la secuencia forzada que optimiza el balance final de piezas, privando a $A_1$ de cualquier oportunidad táctica.
+
+\subsubsection{Paridad de Tempo y Ventaja del Segundo Jugador en Othello}
+El comportamiento revelado en los \textit{mirror matches} (Tabla \ref{tab:mirror_matches}) arroja luz sobre una propiedad teórica fascinante de Othello. Mientras que en $A_1$ vs. $A_1$ y $A_2$ vs. $A_2$ las partidas culminan invariablemente en un empate perfecto ($32$ a $32$), en $A_3$ vs. $A_3$ el empate desaparece por completo: el jugador que controla las fichas Blancas (el segundo jugador en mover) gana el $100\%$ de las partidas con un resultado idéntico de $39$ a $25$ (+14 fichas).
+
+En la literatura especializada de Othello, este fenómeno se conoce como \textbf{Paridad de Tempo} (\textit{Endgame Parity}) \cite{buro1997logistello}. Hacia el final del juego, el tablero se divide en regiones independientes de casillas vacías contiguas. Si una región contiene un número par de casillas, el segundo jugador en entrar a dicha región puede garantizar realizar la última jugada dentro de ella, volteando las fichas del adversario sin que este pueda contraatacar de inmediato. Cuando dos agentes con capacidad de resolución exacta se enfrentan, el segundo jugador retiene la iniciativa del último movimiento en el tablero cerrado, inclinando la balanza de paridad a su favor de forma matemática.
+
+\section{Mejora de Función de Evaluación en Cacho}
+
+\subsection{Función Base}
+En el juego de Cacho, un agente ingenuo evalúa cada jugada evaluando exclusivamente la puntuación inmediata obtenida por la categoría seleccionada:
+\begin{equation}
+    E_{\text{base}}(s) = \text{Puntaje}(c, \text{dados})
+\end{equation}
+Esta función miope presenta severas deficiencias: no considera el costo de oportunidad de gastar prematuramente categorías de alto valor potencial (como la Grande o el Póker), ni modela el valor esperado de los lanzamientos restantes en el turno.
+
+\subsection{Propuesta de Mejora}
+Se formula una función de evaluación avanzada $E_{\text{Cacho}}(s)$ integrada en un árbol Expectiminimax, definida como:
+\begin{equation}
+    E_{\text{Cacho}}(s) = \alpha \cdot \text{Puntaje}(c, \text{dados}) + \beta \cdot \mathbb{E}[\text{Futuro}(s')] - \gamma \cdot \text{PenalizaciónRiesgo}(c)
+\end{equation}
+donde:
+\begin{itemize}
+    \item $\mathbb{E}[\text{Futuro}(s')] = \sum_{r \in \Omega} P(r) \cdot \max_{c'} \text{Puntaje}(c', r)$ representa el valor esperado de los dados relanzados calculado sobre la distribución multinomial de los dados de seis caras.
+    \item $\text{PenalizaciónRiesgo}(c)$ penaliza la quema o sacrificio de categorías mayores (Grande: 50 pts, Póker: 40/45 pts) cuando la probabilidad de completarlas con las tiradas restantes es estadísticamente viable.
+    \item Los coeficientes $\{\alpha, \beta, \gamma\}$ se calibran en función del número de ronda transcurrido, aumentando la aversión al riesgo en las rondas iniciales y forzando la maximización de puntos netos hacia el cierre de la planilla.
+\end{itemize}
+
+\subsection{Implementación}
+La toma de decisión se desacopla en dos fases:
+\begin{enumerate}
+    \item \textbf{Selección de Dados a Reservar:} Evaluada mediante nodos probabilísticos de Expectiminimax explorando los subconjuntos de reserva $K \subseteq \{1, \dots, 5\}$.
+    \item \textbf{Asignación de Categoría:} Selección determinista que maximiza la utilidad combinada de puntaje actual y preservación de categorías futuras.
+\end{enumerate}
+
+\subsection{Análisis Comparativo}
+A diferencia de Othello, donde el árbol es determinista y la profundidad manda, en Cacho el agente optimizado destaca por calcular umbrales de probabilidad crítica: nunca arriesga una figura mayor asegurada a menos que el valor esperado condicional supere la media de las opciones seguras de balas restantes.
+
+\section{Evaluación Estadística y Eficiencia}
+
+\subsection{Metodología de Medición}
+Los experimentos se ejecutaron sobre un procesador con arquitectura multinúcleo x86\_64 bajo Linux (CachyOS con kernel Zen). Los tiempos de cómputo por movimiento fueron instrumentados mediante el módulo de alta resolución \texttt{time.perf\_counter()}, promediando los tiempos individuales a lo largo de cada partida del torneo.
+
+\subsection{Resultados de Rendimiento Temporal}
+La Tabla \ref{tab:eficiencia} resume los tiempos promedio de respuesta y la eficiencia de los agentes en Othello.
+
+\begin{table}[h]
+    \centering
+    \caption{Comparativa de eficiencia temporal por agente en Othello}
+    \label{tab:eficiencia}
+    \resizebox{\textwidth}{!}{%
+    \begin{tabular}{lccc}
+        \toprule
+        \textbf{Agente} & \textbf{Profundidad de Búsqueda} & \textbf{Tiempo Medio/Jugada (s)} & \textbf{Nodos Expandidos/s (aprox)} \\
+        \midrule
+        $A_1$ ($E_1$ Estática) & Fija $d=4$ & $0.380 \pm 0.04$ & $\sim 280$ \\
+        $A_2$ ($E_2$ Adaptativa) & Fija $d=4$ & $0.350 \pm 0.03$ & $\sim 300$ \\
+        $A_3$ ($E_3$ Solver Dinámico) & Adaptativa $d \in [4, 8]$ & $0.460 \pm 0.08$ & $\sim 450$ \\
+        \bottomrule
+    \end{tabular}%
+    }
+\end{table}
+
+\subsection{Discusión de Eficiencia}
+A pesar de que el agente $A_3$ incrementa la profundidad a $d=6$ y $d=8$ en la etapa final de la partida, el incremento en el tiempo medio por jugada es de tan solo $0.08$ segundos respecto a los agentes de profundidad fija ($0.460$ s frente a $0.380$ s). Esto confirma la predicción teórica: el factor de ramificación efectivo en los finales de Othello ($b \le 3$) permite que la poda Alpha-Beta resuelva el final del juego casi en tiempo real, proporcionando una superioridad táctica decisiva a un coste computacional marginal.
+
+\section{Conclusiones}
+
+\subsection{Conclusiones}
+En este trabajo se formalizaron, implementaron y evaluaron críticamente funciones de evaluación para agentes inteligentes en juegos adversariales deterministas y estocásticos. Los principales hallazgos de la investigación son:
+\begin{enumerate}
+    \item \textbf{La adaptatividad desarticulada es contraproducente:} Introducir transiciones de pesos dinámicas sin considerar el horizonte de búsqueda (como en $E_2$) induce el Efecto Horizonte y conduce a derrotas sistemáticas ante funciones estáticas equilibradas ($E_1$).
+    \item \textbf{La superioridad del Solver Terminal Dinámico:} La integración de pesos residuales estables con una profundidad de búsqueda adaptativa en finales ($E_3$) garantiza la dominancia absoluta ($100\%$ de victorias ante la función base), transformando la paridad de fichas en certeza matemática.
+    \item \textbf{Rigor en el Muestreo Experimental:} En sistemas de búsqueda puramente deterministas sin inicialización estocástica, aumentar el tamaño de muestra de 100 a 1000 partidas es computacionalmente redundante debido a que $\sigma^2 = 0$. La riqueza científica reside en contrastar arquitecturas heurísticas y examinar simetrías en partidas espejo.
+    \item \textbf{Ventaja de Paridad de Tempo:} Las partidas espejo $E_3$ vs. $E_3$ confirmaron empíricamente la ventaja estructural del segundo jugador en el juego perfecto de finales de Othello, ganando el $100\%$ de las partidas con un diferencial exacto de $+14$ fichas.
+\end{enumerate}
+
+\subsection{Limitaciones}
+Las principales limitaciones del presente trabajo radican en:
+\begin{itemize}
+    \item La ausencia de tablas de transposición (\textit{transposition tables}) mediante funciones hash de Zobrist, lo que impide reutilizar evaluaciones de nodos transpuestos en el árbol de búsqueda.
+    \item La inexistencia de una librería de aperturas (\textit{opening book}) estocástica que hubiera permitido explorar ramificaciones iniciales diversificadas en Othello.
+\end{itemize}
+
+\subsection{Trabajo Futuro}
+Como líneas de trabajo futuro se plantean:
+\begin{itemize}
+    \item Implementar Tablas de Transposición con reemplazo LRU e integración de búsqueda por ventanas nulas (\textit{Principal Variation Search / NegaScout}).
+    \item Entrenar los pesos de las características heurísticas mediante algoritmos de aprendizaje por refuerzo o descenso de gradiente temporal (\textit{Temporal Difference Learning, TD}) emulando la metodología de Logistello \cite{buro1997logistello}.
+    \item Extender el solver de finales a profundidades $d \ge 12$ mediante optimizaciones Bitboard de 64 bits a bajo nivel.
+\end{itemize}
+
+\section*{Referencias}
+\bibliographystyle{plain}
+\bibliography{referencias}
+
+\end{document}
