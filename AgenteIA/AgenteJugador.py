@@ -4,12 +4,18 @@ import time
 
 ElEstado = namedtuple('ElEstado', 'jugador, get_utilidad, tablero, movidas')
 
+
 class AgenteJugador(Agente):
     def __init__(self, altura=3):
         Agente.__init__(self)
         self.estado = None
         self.altura = altura
-        self.tecnica = "podaalfabeta" # Por defecto
+        self.tecnica = "podaalfabeta"  # Por defecto
+        # Métricas de la última decisión (las usa torneo.py)
+        self.nodos = 0            # nodos expandidos (llamadas a la búsqueda)
+        self.evaluaciones = 0     # llamadas a funcion_evaluacion en las hojas
+        self.tiempo_decision = 0.0
+        self.valor_decision = 0.0  # valor minimax de la jugada elegida
 
     def jugadas(self, estado):
         raise NotImplementedError
@@ -27,50 +33,54 @@ class AgenteJugador(Agente):
         raise NotImplementedError
 
     def podaAlphaBeta_eval(self, estado):
-        jugador = estado.jugador
+        """
+        Minimax con poda Alpha-Beta y corte por profundidad (self.altura).
 
-        def max_value(e, alpha, beta, profundidad):
-            if self.testTerminal(e) or profundidad >= self.altura:
-                return self.funcion_evaluacion(e)
-            v = -float('inf')
-            for accion in self.jugadas(e):
-                v = max(v, min_value(self.getResultado(e, accion), alpha, beta, profundidad + 1))
-                if v >= beta: return v
-                alpha = max(alpha, v)
-            return v
+        El tipo de nodo (MAX o MIN) se decide por el jugador que mueve en cada estado
+        y no por la paridad de la profundidad: en Othello un jugador puede pasar y
+        mover dos veces seguidas, y en ese caso el nodo sigue siendo MAX.
+        """
+        raiz = estado.jugador
 
-        def min_value(e, alpha, beta, profundidad):
+        def valor(e, alpha, beta, profundidad):
+            self.nodos += 1
             if self.testTerminal(e) or profundidad >= self.altura:
+                self.evaluaciones += 1
                 return self.funcion_evaluacion(e)
-            v = float('inf')
+            if e.jugador == raiz:                      # nodo MAX
+                v = -float('inf')
+                for accion in self.jugadas(e):
+                    v = max(v, valor(self.getResultado(e, accion), alpha, beta, profundidad + 1))
+                    if v >= beta:
+                        return v
+                    alpha = max(alpha, v)
+                return v
+            v = float('inf')                           # nodo MIN
             for accion in self.jugadas(e):
-                v = min(v, max_value(self.getResultado(e, accion), alpha, beta, profundidad + 1))
-                if v <= alpha: return v
+                v = min(v, valor(self.getResultado(e, accion), alpha, beta, profundidad + 1))
+                if v <= alpha:
+                    return v
                 beta = min(beta, v)
             return v
 
+        acciones = self.jugadas(estado)
         mejor_score = -float('inf')
-        beta = float('inf')
-        mejor_accion = self.jugadas(estado)[0] if self.jugadas(estado) else None
-        
-        for accion in self.jugadas(estado):
-            v = min_value(self.getResultado(estado, accion), mejor_score, beta, 1) # Inicia en profundidad 1
+        mejor_accion = acciones[0] if acciones else None
+        self.nodos += 1
+        for accion in acciones:
+            v = valor(self.getResultado(estado, accion), mejor_score, float('inf'), 1)
             if v > mejor_score:
                 mejor_score = v
                 mejor_accion = accion
+        self.valor_decision = mejor_score
         return mejor_accion
 
-    def mide_tiempo(funcion):
-        def funcion_medida(*args, **kwargs):
-            inicio = time.time()
-            c = funcion(*args, **kwargs)
-            return c
-        return funcion_medida
-
-    @mide_tiempo
     def programa(self):
         if not self.estado.movidas:
             self.set_acciones(None)
             return
-        
+        self.nodos = 0
+        self.evaluaciones = 0
+        inicio = time.perf_counter()
         self.set_acciones(self.podaAlphaBeta_eval(self.estado))
+        self.tiempo_decision = time.perf_counter() - inicio

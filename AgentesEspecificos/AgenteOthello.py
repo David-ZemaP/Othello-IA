@@ -13,8 +13,9 @@ class AgenteOthello(AgenteJugador):
     """
     Agente de Inteligencia Artificial para Othello / Reversi.
     Implementa búsqueda adversarial Alpha-Beta con funciones de evaluación:
-    - 'adaptativa' (E2): Dinámica por fases (Apertura, Medio juego, Endgame)
-    - 'estatica' (E1): Component-wise balanceada invariante
+    - 'estatica' (E1): component-wise con pesos invariables, profundidad fija `altura`
+    - 'adaptativa' (E2): pesos por fase, profundidad fija `altura`
+    - 'adaptativa_dinamica' (E3): pesos por fase de E3 y profundidad d(N) del artículo
     """
 
     def __init__(self, altura=6, modo_evaluacion='adaptativa_dinamica', profundidad_dinamica=None):
@@ -27,23 +28,23 @@ class AgenteOthello(AgenteJugador):
         else:
             self.profundidad_dinamica = profundidad_dinamica
 
+    @staticmethod
+    def profundidad_E3(n_fichas):
+        """d(N) del artículo: 4 si N < 44; 6 si 44 <= N < 52; min(8, 64 - N) si N >= 52."""
+        if n_fichas < 44:
+            return 4
+        if n_fichas < 52:
+            return 6
+        return min(8, 64 - n_fichas)
+
     def programa(self):
         if not self.estado.movidas:
             self.set_acciones(None)
             return
-
         if self.profundidad_dinamica:
-            total_fichas = int(np.sum(self.estado.tablero != 0))
-            if total_fichas >= 52:
-                casillas_restantes = 64 - total_fichas
-                self.altura = max(self.altura_base, min(8, casillas_restantes))
-            elif total_fichas >= 44:
-                self.altura = max(self.altura_base, 6)
-            else:
-                self.altura = self.altura_base
+            self.altura = self.profundidad_E3(int(np.sum(self.estado.tablero != 0)))
         else:
             self.altura = self.altura_base
-
         super().programa()
 
     def jugadas(self, estado):
@@ -160,28 +161,63 @@ class AgenteOthello(AgenteJugador):
             )
 
     # --- Métodos auxiliares de validación de jugadas ---
-    def _is_valid_move(self, board, player, row, col):
-        if board[row, col] != 0:
-            return False
-        
-        opponent = 3 - player
-        directions = [(-1, -1), (-1, 0), (-1, 1), (0, -1), (0, 1), (1, -1), (1, 0), (1, 1)]
+    # Generación de jugadas con bitboards (enteros de 64 bits, bit i = casilla r*8+c).
+    # Devuelve exactamente las mismas jugadas y en el mismo orden (fila por fila) que la
+    # versión anterior casilla por casilla, pero ~20 veces más rápido.
+    _FULL = (1 << 64) - 1
+    _NO_COL0 = sum(1 << i for i in range(64) if i % 8 != 0)
+    _NO_COL7 = sum(1 << i for i in range(64) if i % 8 != 7)
+    _DIRS = ((1, _NO_COL0), (-1, _NO_COL7), (8, _FULL), (-8, _FULL),
+             (9, _NO_COL0), (-9, _NO_COL7), (7, _NO_COL7), (-7, _NO_COL0))
+    _POT = (np.uint64(1) << np.arange(64, dtype=np.uint64))
 
-        for dr, dc in directions:
-            r, c = row + dr, col + dc
-            found_opponent = False
-            while 0 <= r < self.BOARD_SIZE and 0 <= c < self.BOARD_SIZE and board[r, c] == opponent:
-                found_opponent = True
-                r += dr
-                c += dc
-            if found_opponent and 0 <= r < self.BOARD_SIZE and 0 <= c < self.BOARD_SIZE and board[r, c] == player:
-                return True
-        return False
+    @classmethod
+    def _bitboards(cls, board, player):
+        plano = board.ravel()
+        p = int(np.dot((plano == player).astype(np.uint64), cls._POT))
+        o = int(np.dot((plano == 3 - player).astype(np.uint64), cls._POT))
+        return p, o
+
+    @classmethod
+    def _desplazar(cls, b, d, mascara):
+        return ((b << d) if d > 0 else (b >> -d)) & mascara
+
+    @classmethod
+    def _mascara_jugadas(cls, p, o):
+        """Bitboard de jugadas legales para el jugador con fichas p contra o."""
+        vacias = ~(p | o) & cls._FULL
+        jugadas = 0
+        for d, m in cls._DIRS:
+            if d > 0:
+                x = (p << d) & m & o
+                x |= (x << d) & m & o
+                x |= (x << d) & m & o
+                x |= (x << d) & m & o
+                x |= (x << d) & m & o
+                x |= (x << d) & m & o
+                jugadas |= (x << d) & m & vacias
+            else:
+                e = -d
+                x = (p >> e) & m & o
+                x |= (x >> e) & m & o
+                x |= (x >> e) & m & o
+                x |= (x >> e) & m & o
+                x |= (x >> e) & m & o
+                x |= (x >> e) & m & o
+                jugadas |= (x >> e) & m & vacias
+        return jugadas
+
+    def _is_valid_move(self, board, player, row, col):
+        p, o = self._bitboards(board, player)
+        return bool((self._mascara_jugadas(p, o) >> (row * 8 + col)) & 1)
 
     def _get_valid_moves(self, board, player):
-        return [
-            (r, c)
-            for r in range(self.BOARD_SIZE)
-            for c in range(self.BOARD_SIZE)
-            if self._is_valid_move(board, player, r, c)
-        ]
+        p, o = self._bitboards(board, player)
+        b = self._mascara_jugadas(p, o)
+        movs = []
+        while b:
+            low = b & -b
+            i = low.bit_length() - 1
+            movs.append((i >> 3, i & 7))
+            b ^= low
+        return movs

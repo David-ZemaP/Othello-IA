@@ -1,3 +1,6 @@
+> **Nota:** este documento describe una versión anterior del evaluador (5 componentes, con fichas frontera `f_F`).
+> El código actual implementa las funciones del artículo (4 componentes, Tabla 1); ver `README_othello.md`.
+
 # Análisis Competitivo de Heurísticas y Hoja de Ruta de Mejoras — Othello IA
 
 Este documento recopila los resultados empíricos obtenidos en partidas contra servidores remotos de otros grupos, el diagnóstico técnico de las debilidades observadas en la poda Alfa-Beta y las mejoras heurísticas y arquitectónicas planificadas para su implementación.
